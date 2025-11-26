@@ -32,11 +32,11 @@ The script automatically generates:
 
 ## Folder Structure
 
-project/
-├── data/
-│ ├── raw/
-│ └── clean/
-├── scripts/
+project/<br>
+├── data/<br>
+│   ├── raw/<br>
+│   └── clean/<br>
+├── scripts/<br>
 └── outputs/
 
 ## Requirements
