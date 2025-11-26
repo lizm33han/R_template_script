@@ -1,0 +1,217 @@
+# ======================================================================
+# About this script -----------------------------------------------------
+# Purpose: Template script for importing, reviewing, cleaning, and
+#          summarizing epidemiological datasets, including creation and
+#          export of formatted tables using flextable and officer.
+# Author:  <Your Name>
+# Date:    <Date>
+# ======================================================================
+
+
+# ======================================================================
+# Install and load packages --------------------------------------------
+# These packages support import/export, cleaning, summarizing,
+# recoding, categorizing, visualization, and table creation.
+# ======================================================================
+
+pacman::p_load(
+  rio,            # import/export
+  here,           # project-safe relative paths
+  skimr,          # data overview
+  janitor,        # clean_names(), tabyl(), etc.
+  epikit,         # age_categories()
+  scales,         # number formatting tools
+  gtsummary,      # publication-quality tables
+  tidyverse,      # data wrangling and visualization
+  flextable,      # table creation and formatting
+  officer         # export to Word
+)
+
+pacman::p_load(webshot)
+webshot::install_phantomjs()    # supports PNG export from flextable
+
+# Optional note:
+#   For fast summary statistics: rstatix::get_summary_stats()
+#   For base R tabulation: table()
+
+
+# ======================================================================
+# Project setup ---------------------------------------------------------
+# This section ensures proper project structure.
+# Recommended folder architecture (example):
+#   project/
+#     ├── data/
+#     │     ├── raw/
+#     │     └── clean/
+#     ├── scripts/
+#     └── outputs/
+#
+# Save this script in scripts/, and place incoming .csv files in data/raw/
+# ======================================================================
+
+
+# ======================================================================
+# Import data -----------------------------------------------------------
+# Replace "example_raw.csv" with your actual file name.
+# here() ensures platform-safe, relative file paths.
+# ======================================================================
+
+linelist_raw <- rio::import(
+  here::here("data", "raw", "example_raw.csv")
+)
+
+
+
+# ======================================================================
+# Quick exploration -----------------------------------------------------
+# Inspect structure, variable types, completeness, and potential issues.
+# ======================================================================
+
+nrow(linelist_raw)                       # number of rows
+names(linelist_raw)                      # column names (note irregular syntax)
+skimr::skim(linelist_raw)                # summary of all fields
+janitor::tabyl(linelist_raw$sex)         # example tabulation
+summary(linelist_raw$age)                # numeric summary
+class(linelist_raw$age)                  # check class
+class(linelist_raw$`onset date`)         # example of a non-standard name
+
+
+
+# ======================================================================
+# Cleaning pipe chain ---------------------------------------------------
+# Reusable workflow for cleaning and harmonizing variables.
+# ======================================================================
+
+linelist <- linelist_raw %>%
+  
+  clean_names() %>%
+  
+  rename(
+    date_onset   = onset_date,
+    date_report  = date_of_report,
+    district_res = adm3_name_res,
+    district_det = adm3_name_det
+  ) %>%
+  
+  select(-row_num) %>%
+  distinct() %>%
+  
+  mutate(
+    date_onset  = lubridate::mdy(date_onset),
+    date_report = lubridate::mdy(date_report)
+  ) %>%
+  
+  mutate(
+    sex = na_if(sex, "Unknown")
+  ) %>%
+  
+  mutate(
+    hospital_clean = recode(
+      hospital,
+      "Mitilary Hospital" = "Military Hospital",
+      "Port"              = "Port Hospital",
+      "Port Hopital"      = "Port Hospital",
+      "St. Mark's Maternity Hospital (SMMH)" = "SMMH"
+    )
+  ) %>%
+  
+  mutate(
+    wt_kg = ifelse(wt_kg < 0, NA, wt_kg)
+  ) %>%
+  
+  mutate(
+    case_def = case_when(
+      lab_confirmed == TRUE                    ~ "Confirmed",
+      epilink == "yes" & fever == "yes"        ~ "Suspect",
+      TRUE                                     ~ "To investigate"
+    )
+  ) %>%
+  
+  mutate(
+    age_years = case_when(
+      age_unit == "years"  ~ age,
+      age_unit == "months" ~ age / 12,
+      is.na(age_unit)      ~ age
+    )
+  ) %>%
+  
+  mutate(
+    age_cat = epikit::age_categories(
+      age_years,
+      lower = 0,
+      upper = 75,
+      by    = 5,
+      separator = " to "
+    )
+  ) %>%
+  
+  mutate(
+    district = dplyr::coalesce(district_det, district_res)
+  )
+
+
+
+# ======================================================================
+# Output checks ---------------------------------------------------------
+# Inspect cleaned values, structure, and categories.
+# ======================================================================
+
+names(linelist)
+janitor::tabyl(linelist$case_def)
+janitor::tabyl(linelist$age_cat)
+skimr::skim(linelist)
+
+
+
+# ======================================================================
+# Visualization example -------------------------------------------------
+# Simple histogram of cleaned onset dates.
+# ======================================================================
+
+ggplot(linelist, aes(x = date_onset)) +
+  geom_histogram(binwidth = 7) +
+  labs(
+    title = "Distribution of Onset Dates",
+    x = "Date of Onset",
+    y = "Count"
+  )
+
+
+
+# ======================================================================
+# Summary table example -------------------------------------------------
+# Demonstrates table creation and exporting using flextable + officer.
+# ======================================================================
+
+summary_table <- linelist %>%
+  summarize(
+    mean_age        = mean(age_years, na.rm = TRUE),
+    mean_wt_kg      = mean(wt_kg, na.rm = TRUE),
+    n_confirmed     = sum(case_def == "Confirmed", na.rm = TRUE),
+    n_suspect       = sum(case_def == "Suspect", na.rm = TRUE)
+  )
+
+summary_table <- flextable(summary_table) %>%
+  autofit() %>%
+  theme_vanilla() %>%
+  set_caption("Summary of Patient Characteristics")
+
+# Export table to Word using here()
+save_as_docx(
+  summary_table,
+  path = here::here("outputs", "summary_table.docx")
+)
+
+
+
+# ======================================================================
+# Export cleaned dataset ------------------------------------------------
+# Save for analysis or modeling.
+# ======================================================================
+
+rio::export(
+  linelist,
+  here::here("data", "clean", "linelist_clean.csv")
+)
+
+# End of script ---------------------------------------------------------
